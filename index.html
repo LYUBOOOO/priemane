@@ -149,6 +149,14 @@ tr.done-row{background:var(--ok-bg)} tr.over-row{background:#f3ecfd} tr.partial-
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:12px 20px;border-radius:12px;font-weight:600;font-size:14px;opacity:0;transition:.25s;z-index:60;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .foot{max-width:1180px;margin:6px auto 30px;padding:0 18px;font-size:11.5px;color:var(--muted)}
+.rimg{width:128px;min-width:128px;height:128px;border-radius:12px;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;overflow:hidden;text-align:center;position:relative}
+.rimg img{max-width:100%;max-height:104px;object-fit:contain}
+.rimg .imgname{position:absolute;bottom:0;left:0;right:0;font-size:9px;background:rgba(255,255,255,.9);padding:2px 3px;line-height:1.15;max-height:36px;overflow:hidden}
+.imgph{font-size:11px;color:var(--muted);padding:6px}
+a.imgph.link{color:var(--accent);text-decoration:none;font-weight:700}
+.rtop{display:flex;gap:14px;align-items:flex-start}
+.rtop .rcol{flex:1;min-width:0}
+@media(max-width:520px){.rimg{width:92px;min-width:92px;height:92px}.rimg img{max-height:72px}}
 </style>
 </head>
 <body>
@@ -198,6 +206,7 @@ tr.done-row{background:var(--ok-bg)} tr.over-row{background:#f3ecfd} tr.partial-
       <div class="tools">
         <button class="btn" id="btn-export-all">⬇ Експорт на цялата история</button>
         <button class="btn" id="btn-import-all">⬆ Импорт</button>
+        <button class="btn" id="btn-imgurl">⚙ Адрес за снимки</button>
       </div>
     </div>
   </div>
@@ -284,10 +293,11 @@ function keyOf(p){return p.paste_ean||('grp:'+(p.equivalents[0]||p.name));}
 
 /* ---------- IndexedDB ---------- */
 const DB={_db:null,
-  open(){return new Promise((res,rej)=>{const r=indexedDB.open('oconnect_receiving',1);
+  open(){return new Promise((res,rej)=>{const r=indexedDB.open('oconnect_receiving',2);
     r.onupgradeneeded=e=>{const db=e.target.result;
       if(!db.objectStoreNames.contains('deliveries'))db.createObjectStore('deliveries',{keyPath:'id'});
-      if(!db.objectStoreNames.contains('aliases'))db.createObjectStore('aliases',{keyPath:'ean'});};
+      if(!db.objectStoreNames.contains('aliases'))db.createObjectStore('aliases',{keyPath:'ean'});
+      if(!db.objectStoreNames.contains('imgcache'))db.createObjectStore('imgcache',{keyPath:'ean'});};
     r.onsuccess=e=>{this._db=e.target.result;res();};r.onerror=e=>rej(e);});},
   tx(s,m){return this._db.transaction(s,m).objectStore(s);},
   put(s,v){return new Promise((res,rej)=>{const r=this.tx(s,'readwrite').put(v);r.onsuccess=()=>res();r.onerror=e=>rej(e);});},
@@ -462,24 +472,28 @@ function processScan(raw){const ean=normEan(raw);if(!ean)return;const hit=INDEX[
 function showResult(p,scannedEan,isPaste,isLearned){
   const k=keyOf(p),rec=current.state.received[k]||0,exp=p.qty||0,over=rec>exp;
   const boxes=(p.boxes&&p.boxes.length)?('Кашон '+p.boxes.join(', ')):'';
+  const imgBox='<div class="rimg" id="rimg"><span class="imgph">…</span></div>';
   if(!p.paste_ean){
     result.className='result bad';
-    result.innerHTML=`<span class="r-tag">⚠ Няма поръчан EAN в големия файл</span>
+    result.innerHTML=`<div class="rtop"><div class="rcol">
+      <span class="r-tag">⚠ Няма поръчан EAN в големия файл</span>
       <div class="r-name">${esc(p.name)}</div>
       <div class="r-sub"><span>Сканиран EAN: <b class="mono">${scannedEan}</b></span><span>Доставчик: <b>${esc(current.supplier)}</b></span>${boxes?`<span>${boxes}</span>`:''}</div>
       <div style="font-size:13px;color:var(--ink2);margin-top:6px">Този продукт не е намерен в поръчките от този доставчик в големия файл. Провери/допълни големия файл.</div>
+      </div>${imgBox}</div>
       <div style="margin-top:10px" class="counter">Прието: <span class="big">${rec}</span> / <span class="big">${exp||'?'}</span></div>`;
-    return;
+    fillImage(p,scannedEan);return;
   }
   result.className='result '+(isPaste?'ok':'alt');
-  result.innerHTML=`<span class="r-tag">${isPaste?'✓ Сканираният = поръчаният EAN':'⚠ Вариант — залепи поръчания EAN'}${isLearned?' · научен':''}</span>
+  result.innerHTML=`<div class="rtop"><div class="rcol">
+    <span class="r-tag">${isPaste?'✓ Сканираният = поръчаният EAN':'⚠ Вариант — залепи поръчания EAN'}${isLearned?' · научен':''}</span>
     <div class="r-name">${esc(p.name)}</div>
     <div class="r-sub">
       <span>Сканиран EAN: <b class="mono">${scannedEan}</b></span>
       <span>Доставчик: <b>${esc(current.supplier)}</b></span>
       <span>Поръчка: <b>${esc(datesText(p))}</b></span>
       ${boxes?`<span>${boxes}</span>`:''}
-    </div>
+    </div></div>${imgBox}</div>
     <div class="eanpaste">
       <div><div class="lbl">Поръчан EAN — въведи в системата (от големия файл)</div><div class="val mono">${p.paste_ean}</div></div>
       <button class="copybtn" id="copyOE">Копирай</button>
@@ -487,6 +501,28 @@ function showResult(p,scannedEan,isPaste,isLearned){
     <div style="margin-top:12px" class="counter">Прието: <span class="big" ${over?'style="color:var(--bad)"':''}>${rec}</span> / <span class="big">${exp}</span>
       ${over?'<span style="color:var(--bad);font-weight:700;font-size:13px">· НАД ПОРЪЧКАТА</span>':(rec===exp&&exp>0?'<span style="color:var(--ok);font-weight:700;font-size:13px">· пълно</span>':'')}</div>`;
   const cb=$('copyOE');if(cb)cb.onclick=()=>{navigator.clipboard.writeText(p.paste_ean).then(()=>{cb.textContent='Копирано ✓';cb.classList.add('done');setTimeout(()=>{cb.textContent='Копирай';cb.classList.remove('done');},1400);});refocus();};
+  fillImage(p,scannedEan);
+}
+
+/* ----- product image (via configurable proxy) + cache ----- */
+function lookupBase(){return (localStorage.getItem('oconnect_lookup_url')||'').trim();}
+async function lookupImage(ean){
+  ean=(ean||'').toString().replace(/\D/g,'');if(!ean)return null;
+  try{const c=await DB.get('imgcache',ean);if(c)return c;}catch(e){}
+  const base=lookupBase();if(!base)return null;
+  try{const r=await fetch(base+(base.includes('?')?'&':'?')+'ean='+encodeURIComponent(ean));if(!r.ok)return null;
+    const d=await r.json();const out={ean,name:d.name||'',image:d.image||''};
+    try{await DB.put('imgcache',out);}catch(e){}return out;}catch(e){return null;}
+}
+async function fillImage(p,scannedEan){
+  const el=$('rimg');if(!el)return;
+  const seen=new Set();const cands=[scannedEan,p.paste_ean].concat(p.equivalents||[]).filter(x=>x&&!seen.has(x)&&seen.add(x));
+  if(lookupBase()){
+    for(const ean of cands){const r=await lookupImage(ean);
+      if(r&&r.image){el.innerHTML=`<img src="${esc(r.image)}" alt="" referrerpolicy="no-referrer" onerror="this.parentNode.innerHTML='<span class=&quot;imgph&quot;>няма снимка</span>'">${r.name?`<div class="imgname">${esc(r.name)}</div>`:''}`;return;}}
+  }
+  const url='https://www.bol.com/nl/nl/s/?searchtext='+encodeURIComponent(scannedEan);
+  el.innerHTML=`<a class="imgph link" href="${url}" target="_blank" rel="noopener">🔍 bol.com</a>`;
 }
 
 let pendingUnknown=null;
@@ -549,6 +585,7 @@ $('btnReport').onclick=()=>exportReport();
 $('btnReset').onclick=()=>{if(confirm('Нулирай приетите количества? (научените EAN-и остават)')){current.state.received={};current.state.viaAlt={};saveCurrent();$('result').className='result empty';$('result').textContent='Нулирано.';renderAll();refocus();}};
 $('btn-back').onclick=()=>saveCurrent().then(showHome);
 $('home-link').onclick=()=>{if(!$('view-recv').classList.contains('hide'))saveCurrent().then(showHome);else showHome();};
+$('btn-imgurl').onclick=()=>{const cur=localStorage.getItem('oconnect_lookup_url')||'';const v=prompt('Адрес на проксито за снимки (напр. https://...onrender.com/lookup). Празно = изключено:',cur);if(v!==null){localStorage.setItem('oconnect_lookup_url',v.trim());toast(v.trim()?'Записан адрес за снимки':'Снимките са изключени');}};
 $('btn-export-all').onclick=async()=>{const dels=await DB.all('deliveries');const al=await DB.all('aliases');dl(new Blob([JSON.stringify({deliveries:dels,aliases:al,exportedAt:Date.now()},null,1)],{type:'application/json'}),'История_приемане.json');toast('Историята е свалена');};
 $('btn-import-all').onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const d=JSON.parse(r.result);for(const x of(d.deliveries||[]))await DB.put('deliveries',x);for(const a of(d.aliases||[]))await DB.put('aliases',a);renderHistory();toast('Импортирано');}catch(x){toast('Грешен файл');}};r.readAsText(f);};i.click();};
 
