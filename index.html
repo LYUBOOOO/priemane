@@ -505,7 +505,7 @@ function showResult(p,scannedEan,isPaste,isLearned){
 }
 
 /* ----- product image (via configurable proxy) + cache ----- */
-function lookupBase(){return (localStorage.getItem('oconnect_lookup_url')||'').trim();}
+function lookupBase(){return (localStorage.getItem('oconnect_lookup_url')||'https://oconnect-lookup.onrender.com/lookup').trim();}
 async function lookupImage(ean){
   ean=(ean||'').toString().replace(/\D/g,'');if(!ean)return null;
   try{const c=await DB.get('imgcache',ean);if(c)return c;}catch(e){}
