@@ -17,8 +17,9 @@ app.use((req,res,next)=>{
 
 async function fromIcecat(ean){
   const user = process.env.ICECAT_USER;
-  if(!user) return null;
-  const url = `https://live.icecat.biz/api?UserName=${encodeURIComponent(user)}&Language=EN&GTIN=${encodeURIComponent(ean)}&Content=Image,General`;
+  const appkey = process.env.ICECAT_APP_KEY;
+  if(!user || !appkey) return null;
+  const url = `https://live.icecat.biz/api?UserName=${encodeURIComponent(user)}&Language=EN&GTIN=${encodeURIComponent(ean)}&Content=Image,General&app_key=${encodeURIComponent(appkey)}`;
   const r = await fetch(url);
   if(!r.ok) return null;
   const d = await r.json();
