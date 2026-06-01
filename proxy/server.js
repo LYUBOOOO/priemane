@@ -43,24 +43,47 @@ async function fromUPC(ean){
   return { name: it.title||'', image:(it.images||[])[0]||'', source:'upcitemdb' };
 }
 
-/* --- BOL.COM (по избор) ---
-   Bol Retailer API: OAuth client-credentials → /retailer/products/{ean} или catalog.
-   Сложи BOL_CLIENT_ID и BOL_CLIENT_SECRET в env и попълни fetch-овете тук.
-async function fromBol(ean){
+/* --- BOL.COM Retailer API (OAuth client-credentials) ---
+   Нужни env: BOL_CLIENT_ID, BOL_CLIENT_SECRET (от продавачкия акаунт в bol.com).
+   Снимка по EAN: GET /retailer/products/{ean}/assets?usage=PRIMARY
+   Заглавие: GET /retailer/content/catalog-products/{ean} */
+let _bolTok=null, _bolExp=0;
+async function bolAuth(){
   const id=process.env.BOL_CLIENT_ID, sec=process.env.BOL_CLIENT_SECRET;
   if(!id||!sec) return null;
-  const tok=await fetch('https://login.bol.com/token?grant_type=client_credentials',{method:'POST',headers:{Authorization:'Basic '+Buffer.from(id+':'+sec).toString('base64')}}).then(r=>r.json());
-  // ... извикай продуктовия endpoint с tok.access_token и върни {name,image}
-  return null;
+  if(_bolTok && Date.now()<_bolExp) return _bolTok;
+  const r=await fetch('https://login.bol.com/token?grant_type=client_credentials',
+    {method:'POST', headers:{Authorization:'Basic '+Buffer.from(id+':'+sec).toString('base64')}});
+  if(!r.ok) return null;
+  const d=await r.json();
+  _bolTok=d.access_token; _bolExp=Date.now()+((d.expires_in||300)*1000)-30000;
+  return _bolTok;
 }
-*/
+async function fromBol(ean){
+  const tok=await bolAuth(); if(!tok) return null;
+  const H={Authorization:'Bearer '+tok, Accept:'application/vnd.retailer.v10+json'};
+  let image='', name='';
+  try{
+    const a=await fetch(`https://api.bol.com/retailer/products/${ean}/assets?usage=PRIMARY`,{headers:H});
+    if(a.ok){ const j=await a.json(); const v=(((j.assets||[])[0]||{}).variants)||[];
+      const pick=v.find(x=>x.size==='medium')||v.find(x=>x.size==='large')||v[v.length-1]||v[0];
+      if(pick) image=pick.url; }
+  }catch(e){}
+  try{
+    const c=await fetch(`https://api.bol.com/retailer/content/catalog-products/${ean}`,{headers:{...H,'Accept-Language':'nl'}});
+    if(c.ok){ const j=await c.json();
+      name = j.title || (Array.isArray(j.attributes) ? (((j.attributes.find(at=>/^title$/i.test(at.id))||{}).values||[])[0]||{}).value : '') || ''; }
+  }catch(e){}
+  if(!image && !name) return null;
+  return { name, image, source:'bol' };
+}
 
 app.get('/lookup', async (req,res)=>{
   const ean = (req.query.ean||'').toString().replace(/\D/g,'');
   if(!ean) return res.status(400).json({error:'no ean'});
   if(cache.has(ean)) return res.json(cache.get(ean));
   let out = null;
-  for(const fn of [fromIcecat, fromUPC]){
+  for(const fn of [fromBol, fromIcecat, fromUPC]){
     try{ const r = await fn(ean); if(r && (r.image||r.name)){ out = r; if(r.image) break; } }catch(e){ /* try next */ }
   }
   out = out || { name:'', image:'', source:'none' };
