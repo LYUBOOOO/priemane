@@ -287,6 +287,19 @@ a.imgph.link{color:var(--accent);text-decoration:none;font-weight:700}
 <script>
 const $=id=>document.getElementById(id);
 function normEan(s){let d=(s==null?'':s).toString().replace(/\D/g,'');if(!d)return'';if(d.length>13)d=d.slice(-13);return d.padStart(13,'0');}
+/* Generate tolerant match keys for an EAN so leading-zero / UPC-A(12) vs EAN-13
+   differences still match. Returns a list of keys to index/look up by. */
+function eanKeys(s){
+  let d=(s==null?'':s).toString().replace(/\D/g,'');
+  if(!d) return [];
+  if(d.length>14) d=d.slice(-14);
+  const keys=new Set();
+  keys.add(d.padStart(13,'0'));            // canonical EAN-13
+  keys.add(d.replace(/^0+/,'')||'0');      // bare, no leading zeros
+  if(d.length>=12) keys.add(d.slice(-12).replace(/^0+/,'')||'0'); // UPC-A core, bare
+  keys.add(d.slice(-13).padStart(13,'0')); // last-13 canonical
+  return [...keys];
+}
 function esc(s){return(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1900);}
 function keyOf(p){return p.paste_ean||('grp:'+(p.equivalents[0]||p.name));}
@@ -373,9 +386,10 @@ let current=null, INDEX={}, aliasesGlobal={};
 
 function buildIndex(){
   INDEX={};
-  current.products.forEach(p=>{(p.equivalents||[]).forEach(e=>{if(!INDEX[e])INDEX[e]={p,isPaste:(e===p.paste_ean)};});if(p.paste_ean)INDEX[p.paste_ean]={p,isPaste:true};});
-  Object.entries(current.state.learned||{}).forEach(([sc,k])=>{const p=current.products.find(x=>keyOf(x)===k);if(p&&!INDEX[sc])INDEX[sc]={p,isPaste:false,learned:true};});
-  Object.entries(aliasesGlobal).forEach(([sc,pe])=>{const p=current.products.find(x=>x.paste_ean===pe);if(p&&!INDEX[sc])INDEX[sc]={p,isPaste:false,learned:true};});
+  const addKeys=(ean,val)=>{eanKeys(ean).forEach(k=>{if(!INDEX[k])INDEX[k]=val;});};
+  current.products.forEach(p=>{(p.equivalents||[]).forEach(e=>addKeys(e,{p,isPaste:(e===p.paste_ean)}));if(p.paste_ean)addKeys(p.paste_ean,{p,isPaste:true});});
+  Object.entries(current.state.learned||{}).forEach(([sc,k])=>{const p=current.products.find(x=>keyOf(x)===k);if(p)addKeys(sc,{p,isPaste:false,learned:true});});
+  Object.entries(aliasesGlobal).forEach(([sc,pe])=>{const p=current.products.find(x=>x.paste_ean===pe);if(p)addKeys(sc,{p,isPaste:false,learned:true});});
 }
 
 /* ---------- HOME ---------- */
@@ -465,7 +479,9 @@ async function saveCurrent(){if(current)await DB.put('deliveries',current);}
 const scan=$('scan'),result=$('result'),tbody=$('tbody');
 function beep(t){try{const ac=new(window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),g=ac.createGain();o.connect(g);g.connect(ac.destination);o.frequency.value=t==='ok'?880:t==='alt'?620:240;g.gain.value=0.06;o.start();setTimeout(()=>{o.stop();ac.close();},t==='bad'?260:120);}catch(e){}}
 function datesText(p){return (p.dates&&p.dates.length)?p.dates.map(d=>d.date+(d.qty?(' ('+d.qty+' бр.)'):'')).join(' · '):'—';}
-function processScan(raw){const ean=normEan(raw);if(!ean)return;const hit=INDEX[ean];if(!hit){beep('bad');openUnknown(ean);return;}
+function processScan(raw){const ean=normEan(raw);if(!ean)return;
+  let hit=null;for(const k of eanKeys(raw)){if(INDEX[k]){hit=INDEX[k];break;}}
+  if(!hit){beep('bad');openUnknown(ean);return;}
   const p=hit.p,k=keyOf(p);current.state.received[k]=(current.state.received[k]||0)+1;
   if(!hit.isPaste)current.state.viaAlt[k]=(current.state.viaAlt[k]||0)+1;
   saveCurrent();showResult(p,ean,hit.isPaste,hit.learned);beep(p.paste_ean?(hit.isPaste?'ok':'alt'):'bad');renderAll();}
