@@ -337,12 +337,29 @@ function parseBigSupplier(wb,supplier){
   return map;
 }
 function parseIvanGroups(rows){
+  /* Unified: OLD (A=EAN,B=name,C=qty; bare-EAN rows below) and NEW (header Product|Qty;
+     A=name,B=qty; next row A = ALL EANs in one cell separated by nbsp/comma/space). */
   const groups=[];let cur=null;
-  rows.forEach(row=>{const e=normEan(row[0]),nm=row[1],qty=row[2];
-    if(nm&&String(nm).trim()){if(String(nm).trim().toLowerCase()==='transport cost'){cur=null;return;}
-      const q=(String(qty==null?'':qty).match(/\d+/)||['0'])[0];cur={name:String(nm).trim(),eans:e?[e]:[],qty:+q||0};groups.push(cur);}
-    else if(cur&&e&&!cur.eans.includes(e))cur.eans.push(e);});
-  const byk={};groups.forEach(g=>{const k=g.eans[0]||g.name;if(byk[k]){g.eans.forEach(e=>{if(!byk[k].eans.includes(e))byk[k].eans.push(e);});byk[k].qty+=g.qty;}else byk[k]=g;});
+  const eansIn=v=>((v==null?'':String(v)).match(/\d{8,14}/g)||[]).map(normEan);
+  const onlyEans=v=>{const t=(v==null?'':String(v));return eansIn(v).length>0 && t.replace(/[\d\s,;\u00a0.]/g,'')==='';};
+  const isQty=t=>/^\s*\d+\s*(pcs?|pc|бр\.?)?\s*$/i.test(t)||/^\s*\d+\s*\/\s*\d+/.test(t);
+  const qtyOf=v=>{const m=(v==null?'':String(v)).match(/\d+/);return m?+m[0]:0;};
+  for(const row of rows){
+    const a=row[0],b=row[1],c=row[2];
+    const aStr=a==null?'':String(a).trim(), bStr=b==null?'':String(b).trim();
+    if(!aStr&&!bStr) continue;
+    if(/^product$/i.test(aStr)) continue;
+    if(/transport cost/i.test(aStr)||/transport cost/i.test(bStr)){cur=null;continue;}
+    const aE=eansIn(a);
+    if(onlyEans(a)){
+      if(!bStr){ if(cur) aE.forEach(e=>{if(!cur.eans.includes(e))cur.eans.push(e);}); continue; }
+      if(isQty(bStr)){ if(cur){aE.forEach(e=>{if(!cur.eans.includes(e))cur.eans.push(e);});cur.qty+=qtyOf(bStr);} continue; }
+      cur={name:bStr,eans:[...aE],qty:qtyOf(c)}; groups.push(cur); continue;
+    }
+    cur={name:aStr,eans:[],qty:qtyOf(bStr)||qtyOf(c)}; groups.push(cur);
+  }
+  const byk={};
+  groups.forEach(g=>{const k=g.eans[0]||g.name;if(byk[k]){g.eans.forEach(e=>{if(!byk[k].eans.includes(e))byk[k].eans.push(e);});byk[k].qty+=g.qty;}else byk[k]=g;});
   return Object.values(byk);
 }
 function mergeDelivery(bigMap,groups){
