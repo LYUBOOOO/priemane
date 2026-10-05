@@ -207,6 +207,7 @@ a.imgph.link{color:var(--accent);text-decoration:none;font-weight:700}
         <button class="btn" id="btn-export-all">⬇ Експорт на цялата история</button>
         <button class="btn" id="btn-import-all">⬆ Импорт</button>
         <button class="btn" id="btn-imgurl">⚙ Адрес за снимки</button>
+        <button class="btn" id="btn-labelsize">⚙ Размер етикет</button>
       </div>
     </div>
   </div>
@@ -531,12 +532,48 @@ function showResult(p,scannedEan,isPaste,isLearned){
     </div></div>${imgBox}</div>
     <div class="eanpaste">
       <div><div class="lbl">Поръчан EAN — въведи в системата (от големия файл)</div><div class="val mono">${p.paste_ean}</div></div>
+      <button class="copybtn" id="printLbl" style="background:var(--accent)">🖨 Етикет</button>
       <button class="copybtn" id="copyOE">Копирай</button>
     </div>
     <div style="margin-top:12px" class="counter">Прието: <span class="big" ${over?'style="color:var(--bad)"':''}>${rec}</span> / <span class="big">${exp}</span>
       ${over?'<span style="color:var(--bad);font-weight:700;font-size:13px">· НАД ПОРЪЧКАТА</span>':(rec===exp&&exp>0?'<span style="color:var(--ok);font-weight:700;font-size:13px">· пълно</span>':'')}</div>`;
   const cb=$('copyOE');if(cb)cb.onclick=()=>{navigator.clipboard.writeText(p.paste_ean).then(()=>{cb.textContent='Копирано ✓';cb.classList.add('done');setTimeout(()=>{cb.textContent='Копирай';cb.classList.remove('done');},1400);});refocus();};
+  const pb=$('printLbl');if(pb)pb.onclick=()=>printLabel(p);
   fillImage(p,scannedEan);
+}
+
+/* ----- EAN-13 barcode (self-contained) + label printing ----- */
+const EAN_L=['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+const EAN_G=['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+const EAN_R=['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+const EAN_PAR=['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+function ean13Bits(code){const d=code.split('').map(Number);const par=EAN_PAR[d[0]];let b='101';
+  for(let i=1;i<=6;i++)b+=(par[i-1]==='L'?EAN_L:EAN_G)[d[i]];b+='01010';for(let i=7;i<=12;i++)b+=EAN_R[d[i]];return b+'101';}
+function ean13Svg(code,wmm,hmm){
+  if(!/^\d{13}$/.test(code))return '';
+  const bits=ean13Bits(code);const n=bits.length;const mod=wmm/(n+14);const x0=mod*7;
+  let rects='';const guard=new Set([0,1,2,45,46,47,48,49,92,93,94]);
+  for(let i=0;i<n;i++){if(bits[i]==='1'){const h=guard.has(i)?hmm:hmm-2.2;rects+=`<rect x="${(x0+i*mod).toFixed(3)}" y="0" width="${mod.toFixed(3)}" height="${h.toFixed(2)}"/>`;}}
+  const txt=`<text x="${(x0+n*mod/2).toFixed(2)}" y="${(hmm+2.6).toFixed(2)}" font-size="2.6" text-anchor="middle" font-family="monospace" letter-spacing="0.9">${code}</text>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${wmm}mm" height="${(hmm+3.4).toFixed(2)}mm" viewBox="0 0 ${wmm} ${(hmm+3.4).toFixed(2)}" shape-rendering="crispEdges"><g fill="#000">${rects}</g>${txt}</svg>`;
+}
+function labelSize(){const s=(localStorage.getItem('oconnect_label_size')||'58x40').split('x').map(Number);return {w:s[0]||58,h:s[1]||40};}
+function printLabel(p){
+  if(!p.paste_ean){toast('Няма поръчан EAN за етикет');return;}
+  const {w,h}=labelSize();const code=p.paste_ean;
+  const bw=Math.min(w-6,50), bh=Math.max(12,Math.min(h-16,22));
+  const svg=ean13Svg(code,bw,bh);
+  const name=esc(p.name).slice(0,70);
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Етикет ${code}</title>
+  <style>@page{size:${w}mm ${h}mm;margin:0}html,body{margin:0;padding:0}
+  .lbl{width:${w}mm;height:${h}mm;box-sizing:border-box;padding:2mm 3mm;font-family:Arial,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1mm;page-break-after:always}
+  .nm{font-size:2.6mm;line-height:1.15;text-align:center;max-height:6.2mm;overflow:hidden;width:100%}
+  .sub{font-size:2.2mm;color:#333}</style></head><body>
+  <div class="lbl"><div class="nm">${name}</div>${svg}<div class="sub">${esc(current.supplier||'')}</div></div>
+  <script>window.onload=function(){setTimeout(function(){window.print();},150);};<\/script></body></html>`;
+  const win=window.open('','_blank','width=420,height=320');
+  if(!win){toast('Браузърът блокира прозореца за печат — разреши pop-ups');return;}
+  win.document.open();win.document.write(html);win.document.close();refocus();
 }
 
 /* ----- product image (via configurable proxy) + cache ----- */
@@ -620,6 +657,7 @@ $('btnReport').onclick=()=>exportReport();
 $('btnReset').onclick=()=>{if(confirm('Нулирай приетите количества? (научените EAN-и остават)')){current.state.received={};current.state.viaAlt={};saveCurrent();$('result').className='result empty';$('result').textContent='Нулирано.';renderAll();refocus();}};
 $('btn-back').onclick=()=>saveCurrent().then(showHome);
 $('home-link').onclick=()=>{if(!$('view-recv').classList.contains('hide'))saveCurrent().then(showHome);else showHome();};
+$('btn-labelsize').onclick=()=>{const cur=localStorage.getItem('oconnect_label_size')||'58x40';const v=prompt('Размер на етикета в мм, ширина x височина (напр. 58x40, 50x30, 62x29):',cur);if(v&&/^\d+x\d+$/.test(v.trim())){localStorage.setItem('oconnect_label_size',v.trim());toast('Размер на етикета: '+v.trim()+' мм');}};
 $('btn-imgurl').onclick=()=>{const cur=localStorage.getItem('oconnect_lookup_url')||'';const v=prompt('Адрес на проксито за снимки (напр. https://...onrender.com/lookup). Празно = изключено:',cur);if(v!==null){localStorage.setItem('oconnect_lookup_url',v.trim());toast(v.trim()?'Записан адрес за снимки':'Снимките са изключени');}};
 $('btn-export-all').onclick=async()=>{const dels=await DB.all('deliveries');const al=await DB.all('aliases');dl(new Blob([JSON.stringify({deliveries:dels,aliases:al,exportedAt:Date.now()},null,1)],{type:'application/json'}),'История_приемане.json');toast('Историята е свалена');};
 $('btn-import-all').onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const d=JSON.parse(r.result);for(const x of(d.deliveries||[]))await DB.put('deliveries',x);for(const a of(d.aliases||[]))await DB.put('aliases',a);renderHistory();toast('Импортирано');}catch(x){toast('Грешен файл');}};r.readAsText(f);};i.click();};
