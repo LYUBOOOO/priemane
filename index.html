@@ -337,26 +337,28 @@ function parseBigSupplier(wb,supplier){
   return map;
 }
 function parseIvanGroups(rows){
-  /* Unified: OLD (A=EAN,B=name,C=qty; bare-EAN rows below) and NEW (header Product|Qty;
-     A=name,B=qty; next row A = ALL EANs in one cell separated by nbsp/comma/space). */
+  /* Column-agnostic: per row, detect name / EAN cells / qty cell wherever they are.
+     Supports: OLD (EAN|name|qty + bare-EAN rows), v2 (Product|Qty, EANs in one cell below),
+     v3 (SKU|Product|Qty|Total, EANs in col B below). */
   const groups=[];let cur=null;
-  const eansIn=v=>((v==null?'':String(v)).match(/\d{8,14}/g)||[]).map(normEan);
-  const onlyEans=v=>{const t=(v==null?'':String(v));return eansIn(v).length>0 && t.replace(/[\d\s,;\u00a0.]/g,'')==='';};
-  const isQty=t=>/^\s*\d+\s*(pcs?|pc|бр\.?)?\s*$/i.test(t)||/^\s*\d+\s*\/\s*\d+/.test(t);
-  const qtyOf=v=>{const m=(v==null?'':String(v)).match(/\d+/);return m?+m[0]:0;};
+  const str=v=>v==null?'':String(v).trim();
+  const eansIn=v=>((str(v)).match(/\d{8,14}/g)||[]).map(normEan);
+  const isEanCell=v=>{const t=str(v);return eansIn(v).length>0 && t.replace(/[\d\s,;\u00a0.]/g,'')==='';};
+  const isQtyCell=v=>{const t=str(v);return /^\d+\s*(pcs?|pc|бр\.?)$/i.test(t)||/^\d+\s*\/\s*\d+$/.test(t);};
+  const isPriceCell=v=>/€|\d\s*(eur|лв\.?)\b/i.test(str(v));
+  const isNameCell=v=>{const t=str(v);return /[A-Za-zА-Яа-я]/.test(t)&&!isQtyCell(v)&&!isPriceCell(v)&&!isEanCell(v);};
+  const qtyOf=v=>{const m=str(v).match(/\d+/);return m?+m[0]:0;};
+  const isHeader=row=>(row||[]).filter(c=>str(c)).length>=2 && (row||[]).some(c=>/^(product|sku|ean|qty|quantity|total)$/i.test(str(c)));
   for(const row of rows){
-    const a=row[0],b=row[1],c=row[2];
-    const aStr=a==null?'':String(a).trim(), bStr=b==null?'':String(b).trim();
-    if(!aStr&&!bStr) continue;
-    if(/^product$/i.test(aStr)) continue;
-    if(/transport cost/i.test(aStr)||/transport cost/i.test(bStr)){cur=null;continue;}
-    const aE=eansIn(a);
-    if(onlyEans(a)){
-      if(!bStr){ if(cur) aE.forEach(e=>{if(!cur.eans.includes(e))cur.eans.push(e);}); continue; }
-      if(isQty(bStr)){ if(cur){aE.forEach(e=>{if(!cur.eans.includes(e))cur.eans.push(e);});cur.qty+=qtyOf(bStr);} continue; }
-      cur={name:bStr,eans:[...aE],qty:qtyOf(c)}; groups.push(cur); continue;
-    }
-    cur={name:aStr,eans:[],qty:qtyOf(bStr)||qtyOf(c)}; groups.push(cur);
+    const cells=(row||[]).filter(c=>str(c)!=='');
+    if(!cells.length) continue;
+    if(isHeader(row)) continue;
+    if(cells.some(c=>/transport cost/i.test(str(c)))){cur=null;continue;}
+    const nameCell=cells.find(isNameCell);
+    const qtyCell=cells.find(isQtyCell);
+    const eans=[];cells.filter(isEanCell).forEach(c=>eansIn(c).forEach(e=>{if(!eans.includes(e))eans.push(e);}));
+    if(nameCell){ cur={name:str(nameCell),eans:[...eans],qty:qtyCell?qtyOf(qtyCell):0}; groups.push(cur); }
+    else if(eans.length&&cur){ eans.forEach(e=>{if(!cur.eans.includes(e))cur.eans.push(e);}); if(qtyCell) cur.qty+=qtyOf(qtyCell); }
   }
   const byk={};
   groups.forEach(g=>{const k=g.eans[0]||g.name;if(byk[k]){g.eans.forEach(e=>{if(!byk[k].eans.includes(e))byk[k].eans.push(e);});byk[k].qty+=g.qty;}else byk[k]=g;});
